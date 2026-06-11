@@ -1,29 +1,59 @@
 import pandas as pd
+import sqlite3
+import os
 
-def prepare():
-    # Wczytujemy plik z zawodnikami
-    fighters = pd.read_csv('ufc_fighters_final.csv')
-    
-    # Mapujemy Twoje specyficzne nazwy na standardowe dla bota
-    # Zmień nazwy po lewej stronie, jeśli w Twoim CSV są inne!
+def prepare_sql():
+    csv_file = 'ufc_fighters_final.csv'
+    if not os.path.exists(csv_file):
+        print(f"❌ BŁĄD: Brak pliku {csv_file}")
+        return
+
+    fighters_df = pd.read_csv(csv_file)
+    conn = sqlite3.connect('ufc_data.db')
+
     mapping = {
         'Fighter_Name': 'fighter_name',
-        'F1_Sig_Landed': 'sig_landed', 
-        'F1_TD_Landed': 'td_landed',
-        'F1_KD': 'kd'
+        'SLpM': 'sig_landed', 
+        'TD_Avg': 'td_landed',
+        'Wins': 'wins',
+        'Losses': 'losses',
+        'Height': 'height',
+        'Reach': 'reach',
+        'Str_Def': 'str_def',
+        'TD_Def': 'td_def'
     }
     
-    # Filtrujemy tylko te kolumny, które istnieją
-    existing_mapping = {k: v for k, v in mapping.items() if k in fighters.columns}
+    existing_mapping = {k: v for k, v in mapping.items() if k in fighters_df.columns}
+    df_clean = fighters_df[list(existing_mapping.keys())].copy()
+    df_clean = df_clean.rename(columns=existing_mapping)
     
-    fighters_clean = fighters[existing_mapping.keys()].copy()
-    fighters_clean = fighters_clean.rename(columns=existing_mapping)
+    if 'DOB' in fighters_df.columns:
+        dob_parsed = pd.to_datetime(fighters_df['DOB'], errors='coerce')
+        df_clean['age'] = 2026 - dob_parsed.dt.year
+        df_clean['age'] = df_clean['age'].fillna(30).astype(int)
+    else:
+        df_clean['age'] = 30
+
+    for col in ['str_def', 'td_def']:
+        if col in df_clean.columns:
+            df_clean[col] = df_clean[col].astype(str).str.replace('%', '', regex=False)
+            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(50.0)
+
+    if 'height' in df_clean.columns:
+        df_clean['height'] = df_clean['height'].astype(str).str.replace('"', '', regex=False)
+        df_clean['height'] = pd.to_numeric(df_clean['height'], errors='coerce').fillna(70.0)
+    if 'reach' in df_clean.columns:
+        df_clean['reach'] = df_clean['reach'].astype(str).str.replace('"', '', regex=False)
+        df_clean['reach'] = pd.to_numeric(df_clean['reach'], errors='coerce').fillna(72.0)
+
+    df_clean = df_clean.drop_duplicates(subset=['fighter_name'], keep='first')
+    df_clean = df_clean.fillna(0)
+
+    df_clean.to_sql('fighters', conn, if_exists='replace', index=False)
     
-    # Usuwamy duplikaty, zostawiając najnowsze statystyki
-    fighters_clean = fighters_clean.drop_duplicates(subset=['fighter_name'], keep='first')
-    
-    fighters_clean.to_csv('fighters_db.csv', index=False)
-    print(f"✅ Baza przygotowana. Kolumny: {fighters_clean.columns.tolist()}")
+    conn.commit()
+    conn.close()
+    print(f"BAZA SQL ROZBUDOWANA  Kolumny: {list(df_clean.columns)}")
 
 if __name__ == "__main__":
-    prepare()
+    prepare_sql()
